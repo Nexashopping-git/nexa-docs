@@ -1,0 +1,389 @@
+// Historical design snapshot. The implemented schema is nexa-server/prisma/schema.prisma.
+// NexaShopping v2 — core schema (Phases 1–3: identity, catalog, inventory)
+// Status: reviewed draft. Orders / payments / credit are NOT here — they are blocked on
+// Q4, Q5, Q9 and will be appended in Phases 4–6.
+//
+// Rules this file obeys (see docs/DATA-MODEL.md):
+//   · money is Decimal(14,2), never Float
+//   · every FK is indexed and has an explicit, LEGAL onDelete
+//   · Cascade only where the child is meaningless without the parent
+//   · nothing important is hard-deleted
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["relationJoins"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────
+// IDENTITY
+// ─────────────────────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  COADMIN
+  DISTRIBUTOR
+  CUSTOMER
+}
+
+enum AccountStatus {
+  PENDING // registered, not yet usable (e.g. distributor awaiting KYC)
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+model Account {
+  id            String        @id @default(uuid()) @db.Uuid
+  phone         String        @unique // E.164, the primary identifier
+  email         String?       @unique
+  name          String?
+  avatarUrl     String?
+  role          Role
+  status        AccountStatus @default(PENDING)
+
+  emailVerifiedAt DateTime?
+  termsAcceptedAt DateTime?
+  lastLoginAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  adminProfile       AdminProfile?
+  distributorProfile DistributorProfile?
+  sessions           Session[]
+  deviceTokens       DeviceToken[]
+  addresses          Address[]
+  stockItems         StockItem[]         @relation("StockOwner")
+  stockLedgerActions StockLedger[]       @relation("LedgerActor")
+  referralsMade      DistributorProfile[] @relation("ReferredBy")
+
+  @@index([role, status])
+  @@index([createdAt])
+}
+
+// Kept only because it holds ≥3 admin-specific fields. Do not create empty profile
+// tables "for symmetry" — customers have none, and that is correct.
+model AdminProfile {
+  id            String   @id @default(uuid()) @db.Uuid
+  accountId     String   @unique @db.Uuid
+  department    String?
+  isFounder     Boolean  @default(false)
+  loginAttempts Int      @default(0)
+  lockedUntil   DateTime?
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+}
+
+model DistributorProfile {
+  id                  String  @id @default(uuid()) @db.Uuid
+  accountId           String  @unique @db.Uuid
+  businessName        String
+  referralCode        String  @unique
+  referredByAccountId String? @db.Uuid // single source of truth for referral; v1 had this
+  territory           String? //   duplicated across a column and a Referral table
+  onboardedAt         DateTime?
+
+  account      Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  referredBy   Account? @relation("ReferredBy", fields: [referredByAccountId], references: [id], onDelete: SetNull)
+
+  @@index([referredByAccountId])
+}
+
+model Session {
+  id               String   @id @default(uuid()) @db.Uuid
+  accountId        String   @db.Uuid
+  refreshTokenHash String   @unique // hashed at rest; the raw token never touches the DB
+  familyId         String   @db.Uuid // rotation family — reuse of a rotated token kills the family
+  userAgent        String?
+  ipAddress        String?
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime @default(now())
+  lastUsedAt       DateTime @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, revokedAt])
+  @@index([expiresAt])
+}
+
+enum DevicePlatform {
+  ANDROID
+  IOS
+  WEB
+}
+
+model DeviceToken {
+  id         String         @id @default(uuid()) @db.Uuid
+  accountId  String         @db.Uuid
+  token      String         @unique
+  platform   DevicePlatform
+  lastSeenAt DateTime       @default(now())
+  createdAt  DateTime       @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+}
+
+model Address {
+  id           String   @id @default(uuid()) @db.Uuid
+  accountId    String   @db.Uuid
+  label        String? // "Home", "Warehouse"
+  contactName  String
+  contactPhone String
+  line1        String
+  line2        String?
+  city         String
+  state        String
+  pincode      String
+  country      String   @default("IN")
+  isDefault    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  // NOTE: orders do NOT foreign-key to this table. They snapshot it as JSONB.
+  @@index([accountId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// CATALOG
+// ─────────────────────────────────────────────────────────────
+
+model Category {
+  id       String  @id @default(uuid()) @db.Uuid
+  parentId String? @db.Uuid
+  name     String
+  slug     String  @unique
+  imageUrl String?
+  position Int     @default(0)
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  parent     Category?      @relation("CategoryTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children   Category[]     @relation("CategoryTree")
+  attributes AttributeDef[]
+  products   Product[]
+
+  @@index([parentId, position])
+  @@index([isActive])
+}
+
+enum AttributeType {
+  TEXT
+  NUMBER
+  BOOLEAN
+  ENUM
+}
+
+model AttributeDef {
+  id            String        @id @default(uuid()) @db.Uuid
+  categoryId    String        @db.Uuid
+  name          String // "Size"
+  code          String // "size" — stable key used by filters
+  type          AttributeType @default(TEXT)
+  unit          String? // "ml", "kg"
+  isVariantAxis Boolean       @default(false) // true → this attribute defines variants
+  isFilterable  Boolean       @default(false)
+  position      Int           @default(0)
+
+  category Category           @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  options  AttributeOption[]
+  variantOptions    VariantOption[]
+  productAttributes ProductAttribute[]
+
+  @@unique([categoryId, code])
+  @@index([categoryId, isVariantAxis])
+}
+
+model AttributeOption {
+  id             String @id @default(uuid()) @db.Uuid
+  attributeDefId String @db.Uuid
+  value          String
+  position       Int    @default(0)
+
+  attributeDef AttributeDef @relation(fields: [attributeDefId], references: [id], onDelete: Cascade)
+
+  @@unique([attributeDefId, value])
+}
+
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+model Product {
+  id               String        @id @default(uuid()) @db.Uuid
+  categoryId       String        @db.Uuid
+  brand            String
+  name             String
+  slug             String        @unique
+  shortDescription String
+  description      String?
+  status           ProductStatus @default(DRAFT)
+  archivedAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  category   Category           @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  variants   ProductVariant[]
+  media      ProductMedia[]
+  attributes ProductAttribute[]
+
+  @@index([categoryId, status])
+  @@index([status, createdAt])
+  // Phase 2 adds, via raw SQL migration:
+  //   ALTER TABLE "Product" ADD COLUMN search tsvector GENERATED ALWAYS AS (...) STORED;
+  //   CREATE INDEX product_search_idx ON "Product" USING GIN (search);
+}
+
+// The sellable unit. Every product has ≥1 variant — a product with no variant axes gets
+// one auto-created on save, so nothing downstream branches on "has variants?".
+model ProductVariant {
+  id         String    @id @default(uuid()) @db.Uuid
+  productId  String    @db.Uuid
+  sku        String    @unique
+  name       String // rendered label: "500 ml · Red", or the product name if single-variant
+  mrp        Decimal   @db.Decimal(14, 2) // printed list price, display only
+  isActive   Boolean   @default(true)
+  archivedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  product    Product         @relation(fields: [productId], references: [id], onDelete: Restrict)
+  options    VariantOption[]
+  media      ProductMedia[]
+  stockItems StockItem[]
+
+  @@index([productId, isActive])
+}
+
+model VariantOption {
+  id             String @id @default(uuid()) @db.Uuid
+  variantId      String @db.Uuid
+  attributeDefId String @db.Uuid
+  value          String
+
+  variant      ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  attributeDef AttributeDef   @relation(fields: [attributeDefId], references: [id], onDelete: Restrict)
+
+  @@unique([variantId, attributeDefId]) // one value per axis per variant
+  @@index([attributeDefId, value]) // powers "filter by 500 ml"
+}
+
+// Descriptive, non-axis attributes: material, warranty, country of origin.
+model ProductAttribute {
+  id             String @id @default(uuid()) @db.Uuid
+  productId      String @db.Uuid
+  attributeDefId String @db.Uuid
+  value          String
+
+  product      Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  attributeDef AttributeDef @relation(fields: [attributeDefId], references: [id], onDelete: Restrict)
+
+  @@unique([productId, attributeDefId])
+}
+
+model ProductMedia {
+  id        String  @id @default(uuid()) @db.Uuid
+  productId String  @db.Uuid
+  variantId String? @db.Uuid // set when the image belongs to one variant (e.g. a colour)
+  url       String
+  alt       String?
+  position  Int     @default(0)
+  isPrimary Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  product Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@index([productId, position])
+  @@index([variantId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// INVENTORY
+// One table for every stock owner. Admin is simply the owner whose role is ADMIN —
+// v1's AdminInventory / DistributorInventory split is what this replaces.
+// ─────────────────────────────────────────────────────────────
+
+model StockItem {
+  id             String  @id @default(uuid()) @db.Uuid
+  ownerAccountId String  @db.Uuid
+  variantId      String  @db.Uuid
+  onHand         Int     @default(0)
+  reserved       Int     @default(0)
+  // `available` is added as a generated column in the migration:
+  //   ALTER TABLE "StockItem" ADD COLUMN available int
+  //     GENERATED ALWAYS AS ("onHand" - "reserved") STORED;
+  //   ALTER TABLE "StockItem" ADD CONSTRAINT stock_non_negative
+  //     CHECK ("onHand" >= 0 AND "reserved" >= 0 AND "reserved" <= "onHand");
+
+  sellPrice     Decimal  @db.Decimal(14, 2)
+  discountPrice Decimal? @db.Decimal(14, 2)
+  taxRatePct    Decimal  @default(0) @db.Decimal(5, 2)
+  isListed      Boolean  @default(false)
+  lowStockAt    Int? // alert threshold
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner   Account        @relation("StockOwner", fields: [ownerAccountId], references: [id], onDelete: Restrict)
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  ledger  StockLedger[]
+
+  @@unique([ownerAccountId, variantId])
+  @@index([ownerAccountId, isListed])
+  @@index([variantId])
+}
+
+enum StockReason {
+  PURCHASE_IN // bought from a supplier (admin) or from admin (distributor)
+  TRANSFER_OUT // sent to another owner
+  TRANSFER_IN // received from another owner
+  SALE_OUT // shipped against an order
+  RETURN_IN
+  RESERVE // order placed, not yet shipped
+  RELEASE // order cancelled/expired
+  ADJUSTMENT // manual correction, requires a note
+  DAMAGE
+}
+
+// Append-only. Never UPDATE, never DELETE. `onHand` is written only alongside a row here,
+// inside one transaction, by inventory.service.applyDelta() — the single writer.
+model StockLedger {
+  id             String      @id @default(uuid()) @db.Uuid
+  stockItemId    String      @db.Uuid
+  delta          Int // signed; RESERVE/RELEASE move `reserved`, not `onHand`
+  onHandAfter    Int
+  reservedAfter  Int
+  reason         StockReason
+  refType        String? // "ORDER", "TRANSFER", "MANUAL"
+  refId          String? @db.Uuid
+  unitCost       Decimal? @db.Decimal(14, 2)
+  batchNo        String?
+  expiryAt       DateTime?
+  note           String?
+  actorAccountId String? @db.Uuid
+
+  createdAt DateTime @default(now())
+
+  stockItem StockItem @relation(fields: [stockItemId], references: [id], onDelete: Restrict)
+  actor     Account?  @relation("LedgerActor", fields: [actorAccountId], references: [id], onDelete: SetNull)
+
+  @@index([stockItemId, createdAt(sort: Desc)])
+  @@index([refType, refId])
+}
