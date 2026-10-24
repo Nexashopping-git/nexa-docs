@@ -2,6 +2,8 @@
 
 > **Dated snapshot:** This file describes the distributor app as of 2026-08-27. The diary submission feature was added later; see [the current overview](../README.md) and the [diary API contract](API.md#diary-cash-receipt-ledger-october-2026).
 
+> **October 2026 auth update:** Distributor panel login now uses admin assigned email with Firebase password or Google sign-in. The panel OTP routes are retired. The separate diary portal continues its own OTP flow. See [the auth rollout guide](DISTRIBUTOR-AUTH-ROLLOUT.md).
+
 Snapshot as of 2026-08-27. Covers everything a distributor account touches: `nexa-server`
 modules used by the distributor role, and every screen in `nexa-distributor`. Server routes were
 read directly from each module's `*.routes.ts` — not inferred from docs. ✅ = built and wired

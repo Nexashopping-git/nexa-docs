@@ -187,29 +187,17 @@ Who: any authenticated
 Response `data`: `{ ok: true }`
 Notes: revokes the current session (`revokedAt`). Idempotent.
 
-### `POST /auth/otp/request` 🟡
-Who: public (pre-auth)
-Request: `{ phone: string }` (E.164, e.g. `+919812345678`)
-Response `data`: `{ ok: true }` — always, regardless of whether the phone is registered
-(avoids leaking which numbers exist).
-Notes: active distributors receive a six-digit OTP through Ping4SMS route 2 using the approved
-DLT sender and template. The code expires after five minutes. Requests inside the 60-second
-resend cooldown keep the previous code valid and do not send another SMS. Delivery runs after
-the generic response is returned so provider latency cannot reveal whether a distributor exists.
-Requests are limited to 20 per hour per client IP. Accepted SMS sends are additionally limited
-to five per hour and ten per day per phone. A limited request still returns the same generic
-success response and sends no SMS. Rate-limit subjects are stored only as SHA-256 hashes.
-
-### `POST /auth/otp/verify` 🟡
-Who: public (pre-auth)
-Request: `{ phone: string, otp: string }` (otp is 6 digits)
-Response `data`: same shape as `POST /auth/admin/login` — `{ token, expiresAt, account }`
-Errors: `VALIDATION_FAILED` · `UNAUTHENTICATED` — unknown or ineligible account, or a wrong,
-expired, exhausted, or replayed code. All pre-authentication failures are intentionally identical.
-`RATE_LIMITED` is returned after 30 verification requests per hour from one client IP.
-Notes: does **not** create an account — distributor accounts only come from admin onboarding
-(`POST /accounts/distributors`). OTP challenges are scrypt-hashed in PostgreSQL, allow five
-failed attempts, and are atomically deleted before issuing a session so they cannot be replayed.
+### `POST /auth/distributor/login` 🟡
+Who: approved DISTRIBUTOR (via Firebase email/password or Google sign-in). Permission: public (pre-auth)
+Request: `{ idToken: string }` — Firebase ID token from either sign-in method.
+Response `data`: same shape as `POST /auth/admin/login` — `{ token, expiresAt, account }`.
+The server requires a verified email on an `ACTIVE` distributor `Account` with a
+`DistributorProfile`. It never creates an account at login.
+Errors: `VALIDATION_FAILED` — missing token · `UNAUTHENTICATED` — invalid token or unverified
+email · `FORBIDDEN` — email not linked to an active distributor · `EXTERNAL_SERVICE_ERROR` —
+Firebase server verification unavailable.
+Notes: distributor panel OTP endpoints `/auth/otp/request` and `/auth/otp/verify` are retired.
+Customer and diary OTP endpoints remain separate and active.
 
 ### `POST /auth/refresh` ⚪       *(refresh-token rotation — added before Phase 5 payments)*
 
@@ -217,8 +205,8 @@ failed attempts, and are atomically deleted before issuing a session so they can
 
 No schema change — `Account`/`AdminProfile`/`DistributorProfile` already exist from Phase 1's
 identity migration. This module is the CRUD surface over them. Distributor **self**-onboarding
-is not built; `POST /accounts/distributors` is the admin-controlled onboarding path. Once an
-account is active, the distributor signs in through the real OTP flow without another migration.
+is not built; `POST /accounts/distributors` is the admin-controlled onboarding path. The admin
+assigns an email, then the distributor uses the password reset email or Google sign-in.
 
 ```ts
 type AccountSummary = {
@@ -267,7 +255,7 @@ other admin's status, and every other field on their own account.
 
 Request
 ```ts
-{ name?: string, avatarUrl?: string,
+{ name?: string, avatarUrl?: string, email?: string, // admin only, distributor accounts only
   status?: "PENDING"|"ACTIVE"|"SUSPENDED"|"CLOSED",     // admin only, not on their own account
   businessName?: string, territory?: string,            // admin only, distributor accounts only
 }
@@ -278,18 +266,21 @@ Errors: `VALIDATION_FAILED` · `NOT_FOUND` ·
 
 ### `POST /accounts/distributors` 🟡
 Who: ADMIN     Permission: `account:write`
-Notes: creates the `Account` and its `DistributorProfile` together, in one transaction.
+Notes: requires a login email and creates the `Account` and its `DistributorProfile` together,
+in one transaction. The server also provisions a Firebase user with an undisclosed random
+password if one does not already exist. The distributor selects a password through Firebase's
+reset email from the panel. Admin email changes revoke existing NexaShopping sessions.
 `referralCode` is generated server-side (unique, not client-supplied).
 
 Request
 ```ts
-{ name: string, phone: string, businessName: string, territory?: string,
+{ name: string, email: string, phone: string, businessName: string, territory?: string,
   referredByAccountId?: string, status?: "PENDING" | "ACTIVE",   // default "ACTIVE"
   credit?: { enabled: boolean, limit: string } // decimal rupees; creates 30-day trade credit
 }
 ```
 Response `data`: `{ account: AccountSummary }`
-Errors: `VALIDATION_FAILED` · `CONFLICT` — phone already in use ·
+Errors: `VALIDATION_FAILED` · `CONFLICT` — phone/email already in use or Firebase email is unverified ·
 `NOT_FOUND` — referredByAccountId doesn't exist ·
 `BUSINESS_RULE_FAILED` — referredByAccountId is not a distributor
 

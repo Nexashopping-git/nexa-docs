@@ -465,3 +465,14 @@ Date: 2026-10-20 · Status: Accepted (records the October 2026 implementation)
 **Decision.** One handover creates one `DiaryEntry` with an audit event. A distributor can submit only for an active linked customer; an admin confirms or reviews the entry. Approved, non-reversed entries alone contribute to the customer's total. Selecting a customer does not create an enrollment record, installment schedule, payment promise, or automatic charge. The first confirmed receipt starts the visible ledger. Reversals retain the original entry and reason. The separate Vite portal is read-only and uses existing-account OTP.
 
 **Consequences.** The cash ledger stays separate from shopping payments and credit. A later request for contractual installment schedules or account enrollment needs an explicit product and legal decision, a new data model, and separate API work; it must not be inferred from the static monthly reference metadata.
+
+---
+
+## ADR-0022 — Distributor panel login moves to email and Google
+Date: 2026-10-24 · Status: Accepted (supersedes ADR-0008 for the distributor panel)
+
+**Context.** Distributor accounts were onboarded with a phone only and signed in with SMS OTP. The panel now needs email/password and Google sign-in. Customer and diary OTP are separate product flows.
+
+**Decision.** Admins assign a unique login email when creating or editing a distributor. The server provisions a Firebase user with an undisclosed random password when needed. Distributors request a Firebase password reset email to choose their password, or use Google with the same verified email. The server exchanges a verified Firebase ID token only for an active distributor account with a profile. It never creates a distributor from a login. Email changes revoke NexaShopping sessions. The old `/auth/otp/request` and `/auth/otp/verify` distributor panel endpoints are removed; `/auth/customer/otp/*` and `/auth/diary/otp/*` remain.
+
+**Consequences.** Existing distributors need an admin assigned email before the new panel can be used. Firebase Email/Password and Google providers must be enabled, and the panel domain must be authorized. Deploy the server before deploying the panel. See [DISTRIBUTOR-AUTH-ROLLOUT.md](DISTRIBUTOR-AUTH-ROLLOUT.md).

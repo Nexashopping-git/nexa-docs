@@ -24,6 +24,10 @@ The code and migrations in each application repository are authoritative for imp
 
 The user-facing hostname requested for this portal is `dairy.nexashopping.in`. Some earlier files say `diary.nexashopping.in`; use the actual deployed hostname consistently in Cloudflare and `CORS_ORIGINS`.
 
+## Distributor sign-in
+
+The distributor panel uses Firebase email/password or Google sign-in, then exchanges the verified Firebase ID token for a NexaShopping session at `POST /auth/distributor/login`. Admins assign each distributor's email. A distributor sets their first password through the panel's password reset email. The former distributor panel OTP endpoints are retired; the separate diary portal still has its own existing-account OTP flow. See [the rollout guide](docs/DISTRIBUTOR-AUTH-ROLLOUT.md).
+
 ## Deployment pointers
 
 - The API URL is `https://api.nexashopping.in`. Production Compose reads `nexa-server/.env` through `env_file`; after a CORS-only change, recreate the API container with `docker compose up -d --no-deps --force-recreate api` from the server directory.
