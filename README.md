@@ -1,6 +1,6 @@
 # NexaShopping engineering reference
 
-This repository holds cross-repository architecture notes, API contracts, and historical plans. **Start here.** The status below was checked against the local source repositories on 2026-10-20; it does not certify the state of production deployments.
+This repository holds cross-repository architecture notes, API contracts, and historical plans. **Start here.** The status below was checked against the local source repositories on 2026-10-25; it does not certify the state of production deployments or live email delivery.
 
 ## Active repositories
 
@@ -26,7 +26,7 @@ The user-facing hostname requested for this portal is `dairy.nexashopping.in`. S
 
 ## Distributor sign-in
 
-The distributor panel uses Firebase email/password or Google sign-in, then exchanges the verified Firebase ID token for a NexaShopping session at `POST /auth/distributor/login`. Admins assign each distributor's email. A distributor sets their first password through the panel's password reset email. The former distributor panel OTP endpoints are retired; the separate diary portal still has its own existing-account OTP flow. See [the rollout guide](docs/DISTRIBUTOR-AUTH-ROLLOUT.md).
+The distributor panel uses Firebase email/password or Google sign-in, then exchanges the verified Firebase ID token for a NexaShopping session at `POST /auth/distributor/login`. Admins assign each distributor's email. The server sends a welcome message from NexaShopping Gmail with a Firebase password link; the panel also offers **Reset password**. The former distributor panel OTP endpoints are retired; the separate diary portal still has its own existing-account OTP flow. See [the rollout guide](docs/DISTRIBUTOR-AUTH-ROLLOUT.md).
 
 ## Deployment pointers
 

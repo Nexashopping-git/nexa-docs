@@ -199,6 +199,15 @@ Firebase server verification unavailable.
 Notes: distributor panel OTP endpoints `/auth/otp/request` and `/auth/otp/verify` are retired.
 Customer and diary OTP endpoints remain separate and active.
 
+### `POST /auth/distributor/password-reset/request` 🟡
+Who: public (pre-auth)
+Request: `{ email: string }` — normalized to lowercase.
+Response `data`: `{ ok: true }` for eligible, unknown, inactive, and rate-limited addresses alike.
+Notes: for approved active distributors, the server starts sending a branded Firebase password reset link from
+`nexashopping9@gmail.com`. The request is rate limited by IP and email. The link is never
+returned to the browser. The generic response does not confirm delivery. This endpoint requires server SMTP configuration.
+If SMTP credentials are missing, it returns `EXTERNAL_SERVICE_ERROR` for every address.
+
 ### `POST /auth/refresh` ⚪       *(refresh-token rotation — added before Phase 5 payments)*
 
 ## Accounts  *(Phase 1)*
@@ -206,7 +215,8 @@ Customer and diary OTP endpoints remain separate and active.
 No schema change — `Account`/`AdminProfile`/`DistributorProfile` already exist from Phase 1's
 identity migration. This module is the CRUD surface over them. Distributor **self**-onboarding
 is not built; `POST /accounts/distributors` is the admin-controlled onboarding path. The admin
-assigns an email, then the distributor uses the password reset email or Google sign-in.
+assigns an email; the server sends a welcome message with a password link. The distributor
+can request another link from the panel's **Reset password** action.
 
 ```ts
 type AccountSummary = {
@@ -260,7 +270,8 @@ Request
   businessName?: string, territory?: string,            // admin only, distributor accounts only
 }
 ```
-Response `data`: `{ account: AccountSummary }`
+Response `data`: `{ account: AccountSummary, welcomeEmailSent?: boolean }` — the email flag
+appears when the admin changes an active distributor's login email or activates a distributor.
 Errors: `VALIDATION_FAILED` · `NOT_FOUND` ·
 `FORBIDDEN` — not admin and (not your own account, or trying to set an admin-only field)
 
@@ -268,8 +279,10 @@ Errors: `VALIDATION_FAILED` · `NOT_FOUND` ·
 Who: ADMIN     Permission: `account:write`
 Notes: requires a login email and creates the `Account` and its `DistributorProfile` together,
 in one transaction. The server also provisions a Firebase user with an undisclosed random
-password if one does not already exist. The distributor selects a password through Firebase's
-reset email from the panel. Admin email changes revoke existing NexaShopping sessions.
+password if one does not already exist. The server sends a welcome email from the configured
+Gmail sender containing a Firebase password link when the account is active. Pending
+distributors receive the welcome link on activation. Admin email changes revoke existing
+NexaShopping sessions and send a new welcome link when the account is active.
 `referralCode` is generated server-side (unique, not client-supplied).
 
 Request
@@ -279,10 +292,19 @@ Request
   credit?: { enabled: boolean, limit: string } // decimal rupees; creates 30-day trade credit
 }
 ```
-Response `data`: `{ account: AccountSummary }`
+Response `data`: `{ account: AccountSummary, welcomeEmailSent?: boolean }`. The email flag
+appears for active accounts. The account is created even if mail delivery fails; Admin can
+resend the link. Pending accounts receive their welcome link when activated.
 Errors: `VALIDATION_FAILED` · `CONFLICT` — phone/email already in use or Firebase email is unverified ·
 `NOT_FOUND` — referredByAccountId doesn't exist ·
 `BUSINESS_RULE_FAILED` — referredByAccountId is not a distributor
+
+### `POST /accounts/:id/welcome-email` 🟡
+Who: ADMIN
+Response `data`: `{ ok: true }`
+Notes: generates a fresh Firebase password link and resends the welcome email to the
+active distributor's current login email. If Gmail delivery fails, returns
+`EXTERNAL_SERVICE_ERROR` so Admin can retry.
 
 ### Deliberately not built yet
 **Co-admin creation** (roadmap Phase 1 item 4) needs a decision first: admin identity today is
