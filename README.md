@@ -38,7 +38,7 @@ The distributor panel uses Firebase email/password or Google sign-in, then excha
 ## Production monitoring rollout (2026-10-26)
 
 The server repository now has an optional Better Stack rollout in
-[docs/monitoring.md](https://github.com/NexaShopping/nexa-server/blob/1ff45f0/docs/monitoring.md):
+[docs/monitoring.md](https://github.com/NexaShopping/nexa-server/blob/c71dc92/docs/monitoring.md):
 safe request summaries, a bounded Vector syslog collector without a Docker
 socket mount, host resource sampling, dashboard/alert setup, and rollback.
 Repository checks do not prove that Better Stack ingestion or notifications are
