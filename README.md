@@ -35,6 +35,16 @@ The distributor panel uses Firebase email/password or Google sign-in, then excha
 - Cloudflare DNS is authoritative for `nexashopping.in`. Keep Vercel DNS records for the existing sites when editing the zone. Attach `dairy.nexashopping.in` as a Worker Custom Domain; the Worker serves `dist/` with a single-page-application fallback.
 - The VPS runbook is [nexa-server/DEPLOY.md](https://github.com/NexaShopping/nexa-server/blob/main/DEPLOY.md). Diary rollout and audit notes are [DIARY-OPERATIONS.md](https://github.com/NexaShopping/nexa-server/blob/main/docs/DIARY-OPERATIONS.md).
 
+## Production monitoring rollout (2026-10-26)
+
+The server repository now has an optional Better Stack rollout in
+[docs/monitoring.md](https://github.com/NexaShopping/nexa-server/blob/main/docs/monitoring.md):
+safe request summaries, a bounded Vector syslog collector without a Docker
+socket mount, host resource sampling, dashboard/alert setup, and rollback.
+Repository checks do not prove that Better Stack ingestion or notifications are
+active in production. Those require a Better Stack source, private VPS token,
+operator setup, and a maintenance-window activation.
+
 ## Reference index
 
 - [API.md](docs/API.md): endpoint shapes and diary contract
